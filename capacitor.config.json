@@ -1,0 +1,13 @@
+{
+  "appId": "com.msakns.owner",
+  "appName": "MSAKNS Owner",
+  "webDir": "dist",
+  "server": {
+    "url": "https://msakns.com/owner/",
+    "cleartext": false,
+    "allowNavigation": ["msakns.com", "*.msakns.com"]
+  },
+  "plugins": {
+    "SplashScreen": { "launchAutoHide": true }
+  }
+}

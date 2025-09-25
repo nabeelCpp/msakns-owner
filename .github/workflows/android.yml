@@ -1,0 +1,100 @@
+name: Android (Owner)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  debug-apk:
+    name: Build Debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+
+      # Build the tiny fallback web bundle (even though app uses server.url)
+      - name: Build web (vite)
+        run: npm run build
+
+      - name: Capacitor sync (android)
+        run: npx cap sync android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Assemble Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: msakns-owner-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+  release-aab:
+    name: Build Release AAB (signed)
+    runs-on: ubuntu-latest
+    # build on tags like v1.0.0 or manual dispatch
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build web (vite)
+        run: npm run build
+
+      - name: Capacitor sync (android)
+        run: npx cap sync android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      # --- Signing (provide secrets in repo settings) ---
+      # ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+      - name: Decode keystore
+        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > msakns_owner.keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      - name: Configure signing in Gradle
+        working-directory: android
+        run: |
+          cat > keystore.properties <<EOF
+          storeFile=../msakns_owner.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+          sed -i 's/android {/&\n    def keystoreProps = new Properties()\n    def f = rootProject.file("keystore.properties")\n    if (f.exists()) { keystoreProps.load(new FileInputStream(f)) }\n\n    signingConfigs {\n        release {\n            if (f.exists()) {\n                storeFile file(keystoreProps[\"storeFile\"])\n                storePassword keystoreProps[\"storePassword\"]\n                keyAlias keystoreProps[\"keyAlias\"]\n                keyPassword keystoreProps[\"keyPassword\"]\n            }\n        }\n    }\n\n    buildTypes {\n        release {\n            minifyEnabled false\n            shrinkResources false\n            signingConfig signingConfigs.release\n        }\n    }\n/' app/build.gradle
+
+      - name: Build Release AAB
+        working-directory: android
+        run: ./gradlew bundleRelease
+
+      - name: Upload Release AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: msakns-owner-release-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab
